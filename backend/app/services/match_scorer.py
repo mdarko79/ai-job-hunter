@@ -1,10 +1,13 @@
 """Score how well a job matches the user's CV + preferences.
 
-Convention: score_job(job, cv_text, prefs) — same as all other services.
+Dynamic version: it follows Settings. If targetRoles are developer/AI roles,
+it scores tech jobs highly and rejects non-tech noise. If targetRoles are
+Barista/Cleaner/etc, it scores those roles instead.
 """
 
 from __future__ import annotations
 import json
+import re
 
 from . import ai_service
 
@@ -23,18 +26,18 @@ async def score_job(job, cv_text="", prefs=None) -> dict:
     prefs = _safe_dict(prefs)
     cv_text = _safe_str(cv_text)
 
-    # Heuristic baseline so things still work without an API key
     baseline = _heuristic_score(prefs, job)
 
     if not ai_service._get_client()[0]:
         return baseline
 
     system = (
-        "You are an expert technical recruiter. Score how well a candidate matches a job. "
+        "You are an expert recruiter. Score how well a candidate matches a job. "
         "Return JSON: { matchScore: 0-100 integer, strongMatches: [string,..], "
         "weakPoints: [string,..], recommendation: 'apply'|'review'|'reject', "
-        "reasoning: '1-2 sentences' }. Be honest. Penalise heavily when work mode, location, "
-        "or salary clearly don't fit user preferences."
+        "reasoning: '1-2 sentences' }. Be strict. The user's targetRoles, preferredTech, "
+        "work mode, salary and location preferences are hard requirements. Penalise heavily "
+        "when the job title/role type does not match the configured targetRoles."
     )
 
     payload = {
@@ -60,8 +63,17 @@ async def score_job(job, cv_text="", prefs=None) -> dict:
     if not result or "matchScore" not in result:
         return baseline
 
+    try:
+        match_score = int(result.get("matchScore", baseline["matchScore"]))
+    except Exception:
+        match_score = baseline["matchScore"]
+
+    # Safety cap: if deterministic rules say the role is a mismatch, do not let AI inflate it too high.
+    if baseline["recommendation"] == "reject" and baseline["matchScore"] < 40:
+        match_score = min(match_score, 45)
+
     return {
-        "matchScore": int(result.get("matchScore", baseline["matchScore"])),
+        "matchScore": max(0, min(100, match_score)),
         "strongMatches": result.get("strongMatches", baseline["strongMatches"]),
         "weakPoints": result.get("weakPoints", baseline["weakPoints"]),
         "recommendation": result.get("recommendation", baseline["recommendation"]),
@@ -69,7 +81,6 @@ async def score_job(job, cv_text="", prefs=None) -> dict:
 
 
 def _norm(value) -> str:
-    import re
     return re.sub(r"\s+", " ", str(value or "").lower()).strip()
 
 
@@ -83,11 +94,37 @@ def _has(text: str, phrase: str) -> bool:
     return any(v and (v in text or v in text_flat) for v in variants)
 
 
-def _heuristic_score(prefs: dict, job: dict) -> dict:
-    """Stricter deterministic scoring fallback.
+_TECH_HINTS = [
+    "software", "developer", "engineer", "full stack", "full-stack", "fullstack",
+    "backend", "back-end", "frontend", "front-end", "react", "next.js", "nextjs",
+    "typescript", "javascript", "python", "node", "fastapi", "django", "flask",
+    "ai", "ml", "machine learning", "llm", "rag", "data engineer", "platform engineer",
+    "web3", "blockchain", "solidity", "smart contract", "devops", "cloud", "sre",
+]
 
-    Old version started at 60, so irrelevant jobs could look acceptable.
-    This one starts lower and only gives high scores to target-role/software jobs.
+_NON_TECH_NOISE_FOR_TECH_PROFILE = [
+    "barista", "cafe", "coffee", "starbucks", "warehouse", "driver", "courier",
+    "supply chain", "delivery operations", "inventory", "retail", "sales associate",
+    "customer service", "store manager", "shift supervisor", "account executive", "recruiter",
+]
+
+
+def _prefs_terms(prefs: dict) -> tuple[list[str], list[str]]:
+    target_roles = [_norm(r) for r in (prefs.get("targetRoles") or []) if _norm(r)]
+    preferred_tech = [_norm(t) for t in (prefs.get("preferredTech") or []) if _norm(t)]
+    return target_roles, preferred_tech
+
+
+def _is_tech_profile(prefs: dict) -> bool:
+    target_roles, preferred_tech = _prefs_terms(prefs)
+    blob = " ".join(target_roles + preferred_tech)
+    return any(_has(blob, k) for k in _TECH_HINTS)
+
+
+def _heuristic_score(prefs: dict, job: dict) -> dict:
+    """Dynamic deterministic scoring fallback.
+
+    This follows Settings instead of being permanently hardcoded for developer jobs.
     """
     if not isinstance(prefs, dict):
         prefs = {}
@@ -101,57 +138,49 @@ def _heuristic_score(prefs: dict, job: dict) -> dict:
     tech_text = " ".join(_norm(t) for t in (job.get("techStack") or []))
     all_text = f"{role} {tech_text} {desc}"
 
-    target_roles = [_norm(r) for r in (prefs.get("targetRoles") or []) if _norm(r)]
-    pref_tech = [_norm(t) for t in (prefs.get("preferredTech") or []) if _norm(t)]
-
-    software_terms = [
-        "software", "developer", "engineer", "full stack", "full-stack", "fullstack",
-        "backend", "frontend", "front end", "back end", "react", "next.js", "nextjs",
-        "typescript", "javascript", "python", "node", "fastapi", "ai", "ml", "llm", "rag",
-        "data engineer", "platform engineer", "web3", "blockchain", "solidity", "devops", "cloud",
-    ]
-    banned_terms = [
-        "barista", "cafe", "coffee", "starbucks", "warehouse", "driver", "courier",
-        "supply chain", "delivery operations", "inventory", "retail", "sales associate",
-        "customer service", "store manager", "shift supervisor",
-    ]
+    target_roles, pref_tech = _prefs_terms(prefs)
+    tech_profile = _is_tech_profile(prefs)
 
     strong: list[str] = []
     weak: list[str] = []
-    score = 25
+    score = 20
 
-    if any(term in role for term in banned_terms):
+    role_target_hits = [r for r in target_roles if _has(role, r)]
+    text_target_hits = [r for r in target_roles if _has(all_text, r)]
+    tech_hits = [t for t in pref_tech if _has(all_text, t)]
+
+    if tech_profile and any(term in role for term in _NON_TECH_NOISE_FOR_TECH_PROFILE):
         return {
             "matchScore": 5,
             "strongMatches": [],
-            "weakPoints": ["Non-tech / non-developer role"],
+            "weakPoints": ["Non-tech / non-developer role for current tech-focused settings"],
             "recommendation": "reject",
         }
 
-    target_hit = any(_has(role, r) for r in target_roles)
-    software_hit = any(_has(role, t) for t in software_terms)
-    tech_hits = [t for t in pref_tech if _has(all_text, t)]
-
-    if target_hit:
-        score += 35
-        strong.append("Target role match")
-    elif software_hit:
-        score += 25
-        strong.append("Software/developer title match")
+    if role_target_hits:
+        score += 45
+        strong.append(f"Target role match: {role_target_hits[0]}")
+    elif text_target_hits:
+        score += 30
+        strong.append(f"Target role mentioned: {text_target_hits[0]}")
+    elif tech_profile and any(_has(role, t) for t in _TECH_HINTS):
+        score += 28
+        strong.append("Relevant tech/software title")
     else:
         score -= 20
         weak.append("Job title does not match target roles")
 
     if tech_hits:
-        score += min(25, len(set(tech_hits)) * 5)
+        # For tech: preferred stack. For non-tech: preferred skills/tools.
+        score += min(25, len(set(tech_hits)) * (5 if tech_profile else 8))
         strong.extend(list(dict.fromkeys(tech_hits))[:6])
-    else:
-        weak.append("No clear preferred tech overlap")
+    elif pref_tech:
+        weak.append("No clear preferred skill/tech overlap")
 
-    # Work mode + location
+    # Work mode + location rules
     if work_mode == "onsite" and not prefs.get("onsite", False):
         score -= 35
-        weak.append("Onsite only")
+        weak.append("Onsite disabled in preferences")
     elif work_mode == "hybrid" and not prefs.get("hybrid", True):
         score -= 25
         weak.append("Hybrid not enabled")
@@ -159,10 +188,25 @@ def _heuristic_score(prefs: dict, job: dict) -> dict:
         score += 8
         strong.append("Remote")
 
+    days = job.get("daysInOffice")
+    max_days = prefs.get("maxDaysInOffice") or prefs.get("max_days_in_office")
+    try:
+        if work_mode == "hybrid" and days is not None and max_days is not None and int(days) > int(max_days):
+            score -= 20
+            weak.append(f"Hybrid requires {days} office days")
+    except Exception:
+        pass
+
     preferred_locations = " ".join(_norm(x) for x in (prefs.get("locations") or []))
     wants_uk_eu = any(x in preferred_locations for x in ["uk", "europe", "eu", "emea"])
-    us_markers = ["united states", "usa", " us ", " ca", " ny", " tx", " fl", " pa", " il", "va", "philadelphia", "chicago", "pittsburgh", "concord", "richmond"]
-    uk_eu_markers = ["uk", "united kingdom", "england", "wales", "scotland", "europe", "emea", "london", "manchester", "remote", "worldwide", "global"]
+    us_markers = [
+        "united states", "usa", " us ", " ca", " ny", " tx", " fl", " pa", " il", " va",
+        "philadelphia", "chicago", "pittsburgh", "concord", "richmond", "san francisco",
+    ]
+    uk_eu_markers = [
+        "uk", "united kingdom", "england", "wales", "scotland", "europe", "emea",
+        "london", "manchester", "remote", "worldwide", "global", "anywhere",
+    ]
     loc_is_us = any(m in f" {location} " for m in us_markers)
     loc_is_uk_eu = any(m in location for m in uk_eu_markers)
     if wants_uk_eu and loc_is_us and not loc_is_uk_eu:
@@ -186,4 +230,3 @@ def _heuristic_score(prefs: dict, job: dict) -> dict:
         "weakPoints": weak[:8],
         "recommendation": rec,
     }
-

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Filter, Search, RefreshCw, Radar, AlertCircle, CheckCircle2, Trash2 } from "lucide-react";
+import { Filter, Search, RefreshCw, Radar, AlertCircle, CheckCircle2, Trash2, Send } from "lucide-react";
 import { JobCard } from "@/components/JobCard";
 import { mockJobs } from "@/lib/mockData";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,7 @@ export default function JobsPage() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
+  const [autoApplying, setAutoApplying] = useState(false);
   const [usingMock, setUsingMock] = useState(false);
   const [searchMessage, setSearchMessage] = useState<string | null>(null);
 
@@ -63,6 +64,39 @@ export default function JobsPage() {
     } finally {
       setSearching(false);
       setTimeout(() => setSearchMessage(null), 5000);
+    }
+  }
+
+  async function runAutoApply() {
+    const highMatches = jobs.filter((j) =>
+      j.matchScore >= 75 &&
+      j.status !== "applied" &&
+      j.status !== "auto-applied" &&
+      j.status !== "rejected"
+    ).length;
+
+    if (!confirm(`Run Auto Apply now?\n\nThe backend will only submit jobs that pass every rule in Rules. Current visible high-match candidates: ${highMatches}.`)) {
+      return;
+    }
+
+    setAutoApplying(true);
+    setSearchMessage(null);
+    try {
+      const r = await fetch(`${API}/applications/auto-run`, { method: "POST" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || "Auto Apply failed");
+
+      const applied = data.applied ?? 0;
+      const failed = data.failed ?? 0;
+      const skipped = data.skipped ?? 0;
+      const remaining = data.remainingToday ?? 0;
+      setSearchMessage(`✓ Auto Apply finished: ${applied} submitted, ${failed} failed, ${skipped} skipped, ${remaining} left today`);
+      await loadJobs();
+    } catch (e: any) {
+      setSearchMessage(`✗ ${e.message || "Auto Apply failed — check backend logs"}`);
+    } finally {
+      setAutoApplying(false);
+      setTimeout(() => setSearchMessage(null), 8000);
     }
   }
 
@@ -118,6 +152,18 @@ export default function JobsPage() {
           >
             <Trash2 className="w-4 h-4" />
             Clear
+          </button>
+          <button
+            onClick={runAutoApply}
+            disabled={autoApplying || searching || usingMock}
+            className="btn-ghost px-4 h-11 inline-flex items-center gap-2 border-accent/30 text-accent hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Submit applications only for jobs that pass every Auto Apply rule"
+          >
+            {autoApplying ? (
+              <><RefreshCw className="w-4 h-4 animate-spin" /> Auto applying...</>
+            ) : (
+              <><Send className="w-4 h-4" /> Run Auto Apply</>
+            )}
           </button>
           <button
             onClick={runSearch}

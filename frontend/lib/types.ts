@@ -48,7 +48,7 @@ export interface Application {
   role: string;
   appliedAt: string;
   mode: ApplicationMode;
-  status: "submitted" | "viewed" | "screening" | "interview" | "rejected" | "offer";
+  status: "draft-ready" | "review-needed" | "submitted" | "viewed" | "screening" | "interview" | "rejected" | "offer";
   coverLetter?: string;
   screenshotUrl?: string;
   atsPdfUrl?: string | null;

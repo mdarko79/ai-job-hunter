@@ -69,7 +69,7 @@ export function JobCard({ job, onChange }: { job: Job; onChange?: () => void }) 
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.detail || "Failed");
-      flash("ok", `Applied (${mode})`);
+      flash("ok", data.message || (mode === "auto" ? "Externally submitted" : mode === "semi-auto" ? "Draft filled" : "Tracked manually"));
       onChange?.();
     } catch (e: any) {
       flash("err", e.message || "Apply failed");
@@ -252,10 +252,33 @@ export function JobCard({ job, onChange }: { job: Job; onChange?: () => void }) 
             <button
               onClick={() => applyJob("manual")}
               disabled={busy !== null}
-              className="btn-primary inline-flex items-center gap-1.5"
+              className="btn-ghost inline-flex items-center gap-1.5"
+              title="Only marks this job as manually applied/tracked in your dashboard"
             >
               {busy === "apply" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              Apply (manual)
+              Track manual
+            </button>
+            <button
+              onClick={() => applyJob("semi-auto")}
+              disabled={busy !== null || !job.url}
+              className="btn-ghost inline-flex items-center gap-1.5"
+              title="Opens the job form, fills your details/CV/cover letter, but does not submit"
+            >
+              {busy === "apply" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bot className="w-3.5 h-3.5" />}
+              Fill Draft
+            </button>
+            <button
+              onClick={() => {
+                if (confirm("Submit this application externally now? Playwright will open the job page, fill the form, upload your CV and click Submit only if required fields look complete.")) {
+                  applyJob("auto");
+                }
+              }}
+              disabled={busy !== null || !job.url}
+              className="btn-primary inline-flex items-center gap-1.5"
+              title="Real browser submit. Status becomes submitted only after confirmation is detected."
+            >
+              {busy === "apply" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              Submit Real
             </button>
             <button
               onClick={generateCover}

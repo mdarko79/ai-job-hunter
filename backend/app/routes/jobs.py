@@ -72,7 +72,7 @@ async def _get_existing_ids(session: AsyncSession, ids: list[str]) -> set[str]:
     return existing
 
 
-_SOFTWARE_TITLE_KEYWORDS = [
+_TECH_PROFILE_HINTS = [
     "software", "developer", "engineer", "full stack", "full-stack", "fullstack",
     "backend", "back-end", "frontend", "front-end", "react", "next.js", "nextjs",
     "typescript", "javascript", "python", "node", "fastapi", "django", "flask",
@@ -80,11 +80,13 @@ _SOFTWARE_TITLE_KEYWORDS = [
     "web3", "blockchain", "solidity", "smart contract", "devops", "cloud", "sre",
 ]
 
-_BANNED_TITLE_KEYWORDS = [
+# Only used as a safety block for your CURRENT tech-focused profile.
+# If you change targetRoles to Barista/Cleaner/etc, these are NOT banned anymore.
+_NON_TECH_NOISE_FOR_TECH_PROFILE = [
     "barista", "cafe", "coffee", "starbucks", "store associate", "retail associate",
     "warehouse", "driver", "courier", "picker", "packer", "shift lead", "shift supervisor",
-    "inventory", "supply chain", "delivery operations", "operations analyst", "allocation analyst",
-    "merchandising", "customer service", "sales associate", "account executive", "recruiter",
+    "inventory", "supply chain", "delivery operations", "allocation analyst", "merchandising",
+    "customer service", "sales associate", "account executive", "recruiter",
 ]
 
 _US_LOCATION_MARKERS = [
@@ -93,7 +95,7 @@ _US_LOCATION_MARKERS = [
     "california", "new york", "texas", "florida", "washington", "massachusetts",
     "illinois", "pennsylvania", "virginia", "georgia", "north carolina", "arizona",
     "philadelphia", "chicago", "pittsburgh", "concord", "richmond", "san francisco",
-    "new york", "boston", "seattle", "austin", "denver", "los angeles",
+    "boston", "seattle", "austin", "denver", "los angeles",
 ]
 
 _UK_EU_LOCATION_MARKERS = [
@@ -127,8 +129,20 @@ def _phrase_in_text(phrase: str, text: str) -> bool:
     return any(v and (v in text or v in text_flat) for v in variants)
 
 
+def _prefs_terms(prefs: dict) -> tuple[list[str], list[str]]:
+    target_roles = [_norm(r) for r in (prefs.get("targetRoles") or []) if _norm(r)]
+    preferred_tech = [_norm(t) for t in (prefs.get("preferredTech") or []) if _norm(t)]
+    return target_roles, preferred_tech
+
+
+def _is_tech_profile(prefs: dict) -> bool:
+    target_roles, preferred_tech = _prefs_terms(prefs)
+    blob = " ".join(target_roles + preferred_tech)
+    return any(_phrase_in_text(k, blob) for k in _TECH_PROFILE_HINTS)
+
+
 def _allowed_location_and_mode(raw: dict, prefs: dict) -> tuple[bool, str]:
-    role, location, mode, _ = _text_for_job(raw)
+    _role, location, mode, _ = _text_for_job(raw)
     if not mode:
         mode = "remote"
 
@@ -139,15 +153,24 @@ def _allowed_location_and_mode(raw: dict, prefs: dict) -> tuple[bool, str]:
     if mode == "remote" and not bool(prefs.get("remote", True)):
         return False, "remote disabled in preferences"
 
+    days = raw.get("daysInOffice")
+    max_days = prefs.get("maxDaysInOffice") or prefs.get("max_days_in_office")
+    try:
+        if mode == "hybrid" and days is not None and max_days is not None and int(days) > int(max_days):
+            return False, f"hybrid requires {days} office days"
+    except Exception:
+        pass
+
     preferred_locations = " ".join(_norm(x) for x in (prefs.get("locations") or []))
     wants_uk_eu = any(x in preferred_locations for x in ["uk", "europe", "eu", "emea"])
     loc_is_us = any(marker in f" {location} " for marker in _US_LOCATION_MARKERS)
     loc_is_uk_eu = any(marker in location for marker in _UK_EU_LOCATION_MARKERS)
 
-    # User preference here is UK/EU Remote. Do not keep US onsite/hybrid/US-only remote roles.
+    # If user says UK/EU Remote, reject US-only roles unless they are clearly global/worldwide.
     if wants_uk_eu and loc_is_us and not loc_is_uk_eu:
         return False, "US location does not match UK/EU preference"
 
+    # Hybrid/onsite must be in a preferred region. Remote can be global/worldwide.
     if mode in {"onsite", "hybrid"} and wants_uk_eu and location and not loc_is_uk_eu:
         return False, "hybrid/onsite location outside preferred region"
 
@@ -155,33 +178,52 @@ def _allowed_location_and_mode(raw: dict, prefs: dict) -> tuple[bool, str]:
 
 
 def _is_relevant_job(raw: dict, prefs: dict) -> tuple[bool, str]:
-    role, location, mode, text = _text_for_job(raw)
+    """Dynamic relevance filter.
+
+    This version follows Settings. If targetRoles are tech roles, it behaves like a
+    tech-job filter. If you change targetRoles to Barista/Cleaner/etc, it stops
+    banning those roles and matches them instead.
+    """
+    role, _location, _mode, text = _text_for_job(raw)
 
     ok_location, why_location = _allowed_location_and_mode(raw, prefs)
     if not ok_location:
         return False, why_location
 
-    # Hard reject obvious non-tech/non-developer roles.
-    if any(term in role for term in _BANNED_TITLE_KEYWORDS):
-        return False, "non-tech job title"
+    target_roles, preferred_tech = _prefs_terms(prefs)
+    tech_profile = _is_tech_profile(prefs)
 
-    target_roles = [_norm(r) for r in (prefs.get("targetRoles") or []) if _norm(r)]
-    preferred_tech = [_norm(t) for t in (prefs.get("preferredTech") or []) if _norm(t)]
+    if not target_roles and not preferred_tech:
+        # No user settings: keep broad, but scoring will decide.
+        return True, "no role filters configured"
 
     role_matches_target = any(_phrase_in_text(r, role) for r in target_roles)
-    role_matches_software = any(_phrase_in_text(k, role) for k in _SOFTWARE_TITLE_KEYWORDS)
+    text_matches_target = any(_phrase_in_text(r, text) for r in target_roles)
     tech_matches = sum(1 for t in preferred_tech if _phrase_in_text(t, text))
 
-    # Strong pass: title is directly relevant.
-    if role_matches_target or role_matches_software:
-        return True, "role/title match"
+    if role_matches_target:
+        return True, "target role title match"
 
-    # Weaker pass: enough preferred tech in the listing, even if the title is broad.
-    if tech_matches >= 2:
-        return True, "tech stack match"
+    # For your current developer/AI setup: allow near-synonyms like Software Engineer,
+    # Backend Engineer, ML Engineer even if the exact target role says Full Stack.
+    if tech_profile:
+        if any(term in role for term in _NON_TECH_NOISE_FOR_TECH_PROFILE):
+            return False, "non-tech job title for tech profile"
+        if any(_phrase_in_text(k, role) for k in _TECH_PROFILE_HINTS):
+            return True, "tech title match"
+        if tech_matches >= 2:
+            return True, "preferred tech stack match"
+        return False, "no target role or tech match"
 
-    return False, "no target role or tech match"
+    # For non-tech settings, do not use hardcoded tech rules. Follow targetRoles.
+    if text_matches_target:
+        return True, "target role mentioned in listing"
 
+    # Preferred tech/skills can also be used for non-tech roles, e.g. Excel, POS, forklift.
+    if preferred_tech and tech_matches >= 1:
+        return True, "preferred skill match"
+
+    return False, "does not match configured target roles"
 
 
 @router.get("")
