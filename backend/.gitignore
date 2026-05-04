@@ -1,0 +1,68 @@
+@'
+# Python
+backend/.venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node / Next.js
+frontend/node_modules/
+node_modules/
+frontend/.next/
+.next/
+out/
+dist/
+build/
+
+# Environment / secrets
+.env
+.env.*
+backend/.env
+frontend/.env.local
+
+# Allow safe examples
+!.env.example
+!backend/.env.example
+!frontend/.env.local.example
+
+# Keys / certs
+*.key
+*.pem
+
+# Databases / local data
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+backend/*.db
+backend/*.db-*
+backend/*.sqlite
+backend/*.sqlite-*
+backend/*.sqlite3
+backend/*.sqlite3-*
+data/
+uploads/
+backend/uploads/
+
+# CVs / private files
+*.pdf
+*.docx
+*.doc
+resumes/
+cv/
+CV/
+
+# Logs
+*.log
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+'@ | Set-Content .gitignore
