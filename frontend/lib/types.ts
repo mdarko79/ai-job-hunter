@@ -68,7 +68,6 @@ export interface AutoApplyRules {
   blacklistCompanies: string[];
   blacklistKeywords: string[];
   requiredTech: string[];
-  // Quality features (opt-in)
   qualityMode: boolean;
   multiDimScoring: boolean;
   minOverallGrade: "A" | "B" | "C" | "D" | "E" | "F";

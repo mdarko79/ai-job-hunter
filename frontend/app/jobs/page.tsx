@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Filter, Search, RefreshCw, Radar, AlertCircle, CheckCircle2, Trash2, Send } from "lucide-react";
+import { Filter, Search, RefreshCw, Radar, AlertCircle, CheckCircle2, Trash2, ClipboardList } from "lucide-react";
 import { JobCard } from "@/components/JobCard";
 import { mockJobs } from "@/lib/mockData";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,7 @@ const filters = [
   { id: "all", label: "All" },
   { id: "high", label: "High match (≥80%)" },
   { id: "ready", label: "Ready" },
+  { id: "draft", label: "Draft-ready" },
   { id: "applied", label: "Applied" },
   { id: "rejected", label: "Rejected" },
 ];
@@ -23,7 +24,7 @@ export default function JobsPage() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
-  const [autoApplying, setAutoApplying] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const [usingMock, setUsingMock] = useState(false);
   const [searchMessage, setSearchMessage] = useState<string | null>(null);
 
@@ -37,12 +38,10 @@ export default function JobsPage() {
         setJobs(data);
         setUsingMock(false);
       } else {
-        // Backend reachable but empty — show empty, not mock
         setJobs([]);
         setUsingMock(false);
       }
     } catch {
-      // Backend offline — show mock so user sees something
       setJobs(mockJobs as Job[]);
       setUsingMock(true);
     } finally {
@@ -67,7 +66,7 @@ export default function JobsPage() {
     }
   }
 
-  async function runAutoApply() {
+  async function runPreparePacks() {
     const highMatches = jobs.filter((j) =>
       j.matchScore >= 75 &&
       j.status !== "applied" &&
@@ -75,27 +74,27 @@ export default function JobsPage() {
       j.status !== "rejected"
     ).length;
 
-    if (!confirm(`Run Auto Apply now?\n\nThe backend will only submit jobs that pass every rule in Rules. Current visible high-match candidates: ${highMatches}.`)) {
+    if (!confirm(`Prepare application packs now?\n\nThis will NOT submit external forms. It will only prepare copy/paste packs for jobs that pass your Rules. Current visible high-match candidates: ${highMatches}.`)) {
       return;
     }
 
-    setAutoApplying(true);
+    setPreparing(true);
     setSearchMessage(null);
     try {
       const r = await fetch(`${API}/applications/auto-run`, { method: "POST" });
       const data = await r.json();
-      if (!r.ok) throw new Error(data.detail || "Auto Apply failed");
+      if (!r.ok) throw new Error(data.detail || "Prepare packs failed");
 
-      const applied = data.applied ?? 0;
+      const prepared = data.prepared ?? 0;
       const failed = data.failed ?? 0;
       const skipped = data.skipped ?? 0;
       const remaining = data.remainingToday ?? 0;
-      setSearchMessage(`✓ Auto Apply finished: ${applied} submitted, ${failed} failed, ${skipped} skipped, ${remaining} left today`);
+      setSearchMessage(`✓ Prepared ${prepared} packs, ${failed} failed, ${skipped} skipped, ${remaining} left today`);
       await loadJobs();
     } catch (e: any) {
-      setSearchMessage(`✗ ${e.message || "Auto Apply failed — check backend logs"}`);
+      setSearchMessage(`✗ ${e.message || "Prepare packs failed — check backend logs"}`);
     } finally {
-      setAutoApplying(false);
+      setPreparing(false);
       setTimeout(() => setSearchMessage(null), 8000);
     }
   }
@@ -105,6 +104,7 @@ export default function JobsPage() {
   const filtered = jobs.filter((j) => {
     if (active === "high" && j.matchScore < 80) return false;
     if (active === "ready" && j.status !== "ready") return false;
+    if (active === "draft" && j.status !== "draft-ready") return false;
     if (active === "applied" && j.status !== "applied" && j.status !== "auto-applied") return false;
     if (active === "rejected" && j.status !== "rejected") return false;
     if (query) {
@@ -119,6 +119,7 @@ export default function JobsPage() {
     if (id === "all") return jobs.length;
     if (id === "high") return jobs.filter((j) => j.matchScore >= 80).length;
     if (id === "ready") return jobs.filter((j) => j.status === "ready").length;
+    if (id === "draft") return jobs.filter((j) => j.status === "draft-ready").length;
     if (id === "applied") return jobs.filter((j) => j.status === "applied" || j.status === "auto-applied").length;
     if (id === "rejected") return jobs.filter((j) => j.status === "rejected").length;
     return 0;
@@ -131,7 +132,7 @@ export default function JobsPage() {
           <div className="label-mono mb-2">Job Search</div>
           <h1 className="font-serif text-4xl tracking-tight">Available roles</h1>
           <p className="text-white/55 mt-1 text-[15px]">
-            Pulls from RemoteOK · JustJoin.it · NoFluffJobs · Greenhouse · Lever · Ashby · Workable · SmartRecruiters · Remotive · Working Nomads.
+            Search roles, prepare application packs, then submit manually in your normal browser.
           </p>
         </div>
         <div className="flex gap-2">
@@ -154,15 +155,15 @@ export default function JobsPage() {
             Clear
           </button>
           <button
-            onClick={runAutoApply}
-            disabled={autoApplying || searching || usingMock}
+            onClick={runPreparePacks}
+            disabled={preparing || searching || usingMock}
             className="btn-ghost px-4 h-11 inline-flex items-center gap-2 border-accent/30 text-accent hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Submit applications only for jobs that pass every Auto Apply rule"
+            title="Prepare copy/paste packs only. Does not submit externally."
           >
-            {autoApplying ? (
-              <><RefreshCw className="w-4 h-4 animate-spin" /> Auto applying...</>
+            {preparing ? (
+              <><RefreshCw className="w-4 h-4 animate-spin" /> Preparing...</>
             ) : (
-              <><Send className="w-4 h-4" /> Run Auto Apply</>
+              <><ClipboardList className="w-4 h-4" /> Prepare Packs</>
             )}
           </button>
           <button
@@ -186,9 +187,7 @@ export default function JobsPage() {
             ? "bg-accent/10 border border-accent/20 text-accent"
             : "bg-danger/10 border border-danger/20 text-danger"
         )}>
-          {searchMessage.startsWith("✓")
-            ? <CheckCircle2 className="w-4 h-4" />
-            : <AlertCircle className="w-4 h-4" />}
+          {searchMessage.startsWith("✓") ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
           {searchMessage.replace(/^[✓✗]\s*/, "")}
         </div>
       )}
@@ -200,7 +199,6 @@ export default function JobsPage() {
         </div>
       )}
 
-      {/* Search & filters */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[260px]">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
@@ -243,7 +241,7 @@ export default function JobsPage() {
           </h3>
           <p className="text-white/50 text-sm max-w-md mx-auto">
             {jobs.length === 0
-              ? "Click \"Search jobs\" above to pull fresh listings from 10+ sources. Takes 10-30 seconds."
+              ? "Click Search jobs above to pull fresh listings."
               : "Try clearing your search or switching tabs."}
           </p>
         </div>
