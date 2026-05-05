@@ -1,299 +1,482 @@
 # AI Job Hunter
 
-Autonomous job-application agent with a polished dashboard and three application modes
-(Manual Review / Semi-Auto / Auto Apply). Frontend is **Next.js 15 + TypeScript + Tailwind**,
-backend is **FastAPI + Playwright + OpenAI**, storage is local SQLite.
+AI Job Hunter is a local, human-in-the-loop job search assistant that helps you find relevant roles, score them against your CV and preferences, and prepare high-quality application materials.
 
-> **Configurable daily limit:** the auto-apply daily cap is fully **user-selectable
-> from 1 to 100** (slider on the *Auto Apply Rules* page). The hard system ceiling
-> defaults to 100 and is set via the backend env var `MAX_APPLICATIONS_PER_DAY_HARD_LIMIT`.
+The app **does not automatically submit job applications**. It is designed to keep you safe from ATS spam flags by preparing cover letters, form answers and copy-paste application packs, while you review everything and submit manually in your normal browser.
+
+---
+
+## What the app does
+
+AI Job Hunter helps you:
+
+- Upload and parse your CV
+- Set target roles, preferred tech stack, locations, work mode and salary expectations
+- Search public job sources and company ATS job boards
+- Filter out irrelevant roles based on your settings
+- Score job matches using AI and deterministic rules
+- Generate cover letters tailored to each job
+- Extract application form questions where possible
+- Generate safe copy-paste answers for application forms
+- Track jobs you have manually applied to
+- Keep logs of search, scoring and application-pack activity
+
+The current workflow is:
+
+```text
+Search Jobs
+→ Review matched jobs
+→ Open Job
+→ Prepare Pack
+→ Extract Questions or Paste Questions
+→ Copy answers manually
+→ Submit yourself in the employer's form
+→ Track manual after confirmation
+```
+
+---
+
+## Important safety note
+
+Earlier versions experimented with automated form filling and submission. The current recommended workflow avoids automated submission because ATS platforms such as Lever, Greenhouse, Ashby and Workday may flag automated submissions as possible spam.
+
+The app is now designed around a safer workflow:
+
+| Action | Who does it |
+|---|---|
+| Find jobs | App |
+| Score matches | App |
+| Generate cover letter | App |
+| Extract or answer form questions | App |
+| Fill employer form | You |
+| Click Submit | You |
+| Confirm application was sent | You |
+| Track application in dashboard | You |
+
+`submitted` should only mean that you personally submitted the application and confirmed it, for example through a confirmation page or email.
 
 ---
 
 ## What's inside
 
-```
+```text
 ai-job-hunter/
-├── frontend/        # Next.js 15 dashboard (works standalone with mock data)
-│   ├── app/         # Dashboard, Jobs, Applications, CV, Rules, Settings, Companies, Logs
-│   ├── components/  # Sidebar, TopBar, JobCard, MatchScoreCircle, StatusBadge, StatCard
-│   └── lib/         # types, mockData, api wrapper with safe fallback, utils
-└── backend/         # FastAPI service
+├── frontend/
+│   ├── app/              # Dashboard, Jobs, Applications, CV, Rules, Settings, Companies, Logs
+│   ├── components/       # Sidebar, TopBar, JobCard, MatchScoreCircle, StatusBadge, StatCard
+│   └── lib/              # API wrapper, types, utilities
+└── backend/
     ├── app/
-    │   ├── routes/      # cv, jobs, applications, match, settings, logs
-    │   ├── services/    # ai_service, cv_parser, match_scorer, cover_letter,
-    │   │                # job_scraper (RemoteOK + Greenhouse + Lever), playwright_apply
-    │   ├── models.py    # SQLAlchemy ORM
-    │   ├── schemas.py   # Pydantic
+    │   ├── routes/       # cv, jobs, applications, match, settings, logs, companies
+    │   ├── services/     # ai_service, cv_parser, match_scorer, cover_letter,
+    │   │                 # job_scraper, form_question_reader
+    │   ├── models.py
+    │   ├── schemas.py
     │   ├── database.py
     │   ├── config.py
     │   └── main.py
-    ├── uploads/         # screenshots + uploaded CVs
+    ├── uploads/          # local uploads, ignored by Git
     └── requirements.txt
 ```
 
 ---
 
-## Three application modes
+## Main features
 
-| Mode            | What AI does                                                              | What you do                          |
-|-----------------|---------------------------------------------------------------------------|--------------------------------------|
-| **Manual**      | Finds + scores job, writes cover letter and form answers                  | Open job, send application yourself  |
-| **Semi-Auto**   | Opens the form via Playwright, fills everything, attaches CV & letter     | Review and click *Submit*            |
-| **Auto Apply**  | The whole thing — but **only** if the rules pass and daily limit is OK    | Nothing (review later in dashboard)  |
+### 1. CV upload and profile extraction
 
-## Quality features (opt-in)
+Upload your CV as PDF, DOCX or TXT. The backend extracts the full text and uses it for:
 
-Inspired by [career-ops](https://github.com/santifer/career-ops). All off by default —
-flip individual switches on the **Auto Apply Rules** page when you want them.
+- job matching
+- cover letters
+- form answers
+- application packs
 
-| Feature                       | What it does                                                          |
-|-------------------------------|-----------------------------------------------------------------------|
-| **Quality mode** (master)     | Prioritises grade over volume — disables Auto-Apply unless re-enabled |
-| **10-dimension A-F scoring**  | Scores roleFit / techFit / compFit / locationFit / cultureFit / growth / learning / companyHealth / appCost — with rationale per dimension |
-| **Auto ATS PDF**              | On every apply, AI extracts keywords from the JD and rewrites your CV (without lying) so it passes ATS screening. Saves PDF with the application. |
-| **Auto Story Bank**           | After every apply, AI mines your CV for STAR+R behavioural stories. Build up 5-10 master stories that answer most behavioural questions. |
-| **Wellfound integration**     | Opt-in Playwright scraper using your session cookie. Risky — their ToS prohibits automation. |
+The CV preview page can show the parsed CV text and extracted skills/profile information.
 
-Auto-Apply guardrails are configurable on the **Auto Apply Rules** page:
+---
 
-- Min match score (default 85%)
-- Max applications per day — **slider 1 → 100** with presets 5 / 10 / 25 / 100
-- Min salary (permanent £ / contract day rate)
-- Allowed work modes (remote / hybrid / onsite)
-- Max days in office
-- Require salary in posting
-- Require manual approval for LinkedIn jobs
-- Save screenshot before submit
-- Blacklist companies / keywords
-- Required tech tokens
+### 2. Settings-based job search
+
+You can configure:
+
+- full name
+- email
+- phone
+- location
+- target roles
+- preferred tech stack
+- allowed work modes
+- minimum salary
+- preferred locations
+- AI provider settings
+
+The search and scoring logic uses these settings. For example, if your target roles are Full Stack Developer, AI Engineer and Python Developer, the app focuses on those roles instead of unrelated jobs.
+
+---
+
+### 3. Job search and smart filtering
+
+The backend searches multiple public job sources and ATS APIs, including company career pages where available.
+
+The app filters and scores jobs using:
+
+- target roles
+- preferred technologies
+- location preferences
+- work mode preferences
+- salary expectations
+- CV relevance
+- AI match scoring
+
+This avoids filling the dashboard with unrelated jobs such as hospitality, retail or operations roles when your settings are for software/AI roles.
+
+---
+
+### 4. AI match scoring
+
+Each job receives a match score. The app can use:
+
+- fast heuristic scoring
+- AI scoring for top matches
+- optional 10-dimension scoring
+
+The goal is to rank jobs by practical fit, not just keyword overlap.
+
+---
+
+### 5. Prepare Pack
+
+For a selected job, **Prepare Pack** creates a copy-paste application pack, including:
+
+- tailored short cover letter
+- tailored longer cover letter
+- job-specific keywords
+- suggested positioning
+- company/role-specific notes
+- draft-ready application material
+
+This does not submit anything to the employer.
+
+---
+
+### 6. Extract Questions
+
+For supported forms, **Extract Questions** attempts to read visible application form questions and generate answers.
+
+This is useful for questions such as:
+
+- Why this company?
+- Why now?
+- What is the most impactful thing you have built?
+- How did you know it worked?
+- Have you used this product?
+- How have you used AI in your work?
+- Tell us about LLM or AI production experience
+
+If the form is multi-step, behind login, uses captcha or loads questions dynamically, automatic extraction may miss questions.
+
+---
+
+### 7. Paste Questions
+
+For maximum safety and reliability, use **Paste Questions**.
+
+Recommended workflow:
+
+```text
+Open Job
+→ Copy the employer's form questions manually
+→ Paste them into AI Job Hunter
+→ Generate answers
+→ Copy answers back into the employer form
+→ Submit manually
+```
+
+This avoids bot detection because the employer form is filled and submitted by you in your normal browser.
+
+---
+
+### 8. Safer form-answer logic
+
+The app has specific handling for common application form fields.
+
+Examples:
+
+| Question type | Example answer behavior |
+|---|---|
+| First name | Uses your saved first name |
+| Last name | Uses your saved last name |
+| LinkedIn | Uses your LinkedIn profile |
+| Location | Uses your saved location |
+| How did you hear about this role? | Uses LinkedIn / company careers page / job board |
+| Work authorization | Manual check |
+| Visa sponsorship | Manual check |
+| Pronouns | Manual check |
+| Demographic questions | Manual check / prefer not to say if available |
+| Disability/veteran/equal-opportunity questions | Manual check |
+| Company-specific factual questions | Manual check |
+
+The app should not guess legal, immigration, demographic or sensitive personal answers.
+
+---
+
+### 9. Track Manual
+
+After you manually submit an application and receive confirmation, click **Track manual**.
+
+This records the application in your dashboard so you can track:
+
+- company
+- role
+- application date
+- status
+- cover letter
+- application notes
+
+---
+
+## What the app does not do
+
+The current safe version does **not**:
+
+- automatically submit applications
+- bypass ATS anti-spam systems
+- spoof browser fingerprints
+- hide automation signals
+- mass-apply without your review
+- answer legal or sensitive demographic questions for you
+- guarantee that a form was submitted unless you track it after confirmation
+
+This is intentional. The goal is better-quality applications, not high-volume spam.
 
 ---
 
 ## Prerequisites
 
-- **Node.js 20+** — https://nodejs.org/
-- **Python 3.11+** — https://www.python.org/downloads/
-- **Git** (optional)
-- An **OpenAI API key** (optional — without it, AI features fall back to heuristics)
+- Node.js 20+
+- Python 3.10+ or 3.11+
+- Git
+- Optional: OpenAI API key or another configured AI provider
 
-> The frontend works standalone with built-in mock data — you can see the whole
-> dashboard before you set up the backend.
+The app can still run with limited heuristic/template behavior if no AI key is configured.
 
 ---
 
 ## Installation — Windows / PowerShell
 
-### One-time PowerShell setup
-
-If `Activate.ps1` is blocked the first time you create a venv, allow local scripts:
+### 1. Clone or open the project
 
 ```powershell
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+cd C:\projekty\ai-job-hunter
 ```
 
-### 1. Frontend (Next.js)
+### 2. Frontend
 
 ```powershell
-cd ai-job-hunter\frontend
+cd C:\projekty\ai-job-hunter\frontend
 npm install
 copy .env.local.example .env.local
 npm run dev
 ```
 
-Open http://localhost:3000 — the dashboard loads with mock data immediately.
+Open:
 
-### 2. Backend (FastAPI)
+```text
+http://localhost:3000
+```
 
-Open a **second** PowerShell window:
+### 3. Backend
+
+Open a second PowerShell window:
 
 ```powershell
-cd ai-job-hunter\backend
-
-# Create and activate a virtual environment
+cd C:\projekty\ai-job-hunter\backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-
-# Install Python dependencies
 pip install -r requirements.txt
-
-# Install the Playwright browser (Chromium only — keeps it small)
-playwright install chromium
-
-# Configure environment
 copy .env.example .env
-# Then edit .env in Notepad and paste your OPENAI_API_KEY (optional)
 notepad .env
+```
 
-# Run the API
+Add your AI API key if you use one.
+
+Run backend:
+
+```powershell
 uvicorn app.main:app --reload --port 8000
 ```
 
-Backend is now at http://localhost:8000 — Swagger UI at http://localhost:8000/docs
+Backend runs at:
 
-The frontend's `.env.local` already points to `http://localhost:8000`, so the moment
-the backend is up the dashboard will start using real data.
-
-### Optional: change the hard daily limit
-
-By default the backend allows the slider to go up to **100**. If you want a different
-ceiling (e.g. 200), edit `backend\.env`:
-
-```
-MAX_APPLICATIONS_PER_DAY_HARD_LIMIT=200
+```text
+http://localhost:8000
 ```
 
-The slider clamps automatically based on the value the API returns from
-`GET /settings/limits`.
+Swagger docs:
+
+```text
+http://localhost:8000/docs
+```
 
 ---
 
-## Installation — macOS / Linux
+## Optional Playwright question extraction
 
-```bash
-# Frontend
-cd ai-job-hunter/frontend
-npm install
-cp .env.local.example .env.local
-npm run dev
+The safest workflow is manual paste of questions. However, if you want to use automatic question extraction, Playwright may be used to open and read form pages.
 
-# Backend (new terminal)
-cd ai-job-hunter/backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium
-cp .env.example .env
-uvicorn app.main:app --reload --port 8000
+Install browser:
+
+```powershell
+cd C:\projekty\ai-job-hunter\backend
+.\.venv\Scripts\activate
+pip install playwright
+python -m playwright install chromium
 ```
+
+On Windows, if Playwright is used, run backend through the Windows-safe launcher:
+
+```powershell
+python run_backend.py
+```
+
+Do not use Playwright for auto-submit. Use it only for reading visible questions.
 
 ---
 
 ## Daily use
 
-1. **Drop your CV** on the *My CV* page (PDF / DOCX / TXT).
-2. Hit **Search Jobs** — backend pulls from RemoteOK + Greenhouse + Lever, scores each
-   role against your CV, and saves the matches.
-3. Open *Matched Jobs*, review the high-match cards, pick a mode per job:
-   - **Review** → just opens the original posting
-   - **Generate Letter** → AI cover letter you can edit
-   - **Auto Fill** → opens Playwright, fills the form, pauses for you to click Submit
-4. On the *Auto Apply Rules* page, toggle Auto Apply on, set your daily limit
-   (slider, max 100) and tighten the safety rules. Anything that fails a rule is left
-   in the *Review needed* column.
-5. Watch the *Logs* tab to see what the agent did and why.
+1. Upload your CV on the CV page.
+2. Configure Settings:
+   - target roles
+   - tech stack
+   - location
+   - remote/hybrid preferences
+   - salary expectations
+3. Click **Search Jobs**.
+4. Review matched jobs.
+5. Click **Open Job** to inspect the employer page.
+6. Click **Prepare Pack** for tailored application material.
+7. Use **Extract Questions** or **Paste Questions** to generate form answers.
+8. Copy answers manually into the employer form.
+9. Submit manually in your normal browser.
+10. Click **Track manual** after confirmation.
 
 ---
 
-## Where it searches for jobs
+## Recommended settings for remote tech roles
 
-Following the same approach as JobCopilot — scraping **official company career
-pages via their ATS APIs**, never LinkedIn/Indeed (which would get you banned).
-All sources below are public and require no authentication:
+Example:
 
-| Source           | Type           | Coverage                                |
-|------------------|----------------|-----------------------------------------|
-| RemoteOK         | aggregator     | Remote-only, mostly tech/AI/Web3        |
-| Remotive         | aggregator     | Curated remote tech jobs                |
-| Working Nomads   | aggregator     | Remote jobs, especially European        |
-| JustJoin.it      | aggregator     | Polish + Central European tech market   |
-| NoFluffJobs      | aggregator     | Polish tech market with salary clarity  |
-| Greenhouse       | ATS            | 88 curated companies (Anthropic, Stripe, Monzo, Wise, Coinbase, Vercel, Linear, Notion, Octopus Energy …) |
-| Lever            | ATS            | 41 curated companies (Netflix, Spotify, Klarna, N26, Adyen, Binance, DeepL …) |
-| Ashby            | ATS            | 27 curated companies (Linear, Vanta, Replit, Mercury, Cursor, Perplexity, Supabase …) |
-| Workable         | ATS            | 12 curated EU/UK companies (Snyk, Personio, Mews, Intercom …) |
-| SmartRecruiters  | ATS            | 7 large enterprises (Visa, Bosch, Ubisoft …) |
-| Wellfound        | opt-in / risky | Requires session cookie (Playwright). Use at your own risk — ToS prohibits automation |
+```text
+Target roles:
+- Full Stack Developer
+- Full Stack Engineer
+- AI Engineer
+- AI Full Stack Developer
+- Python Developer
+- React / Next.js Developer
+- Web3 Developer
 
-**~175 named companies + 3 aggregators**, all scraped in parallel — but you
-can scale this up automatically with **company discovery** (see below).
+Preferred tech:
+- Next.js
+- TypeScript
+- React
+- Python
+- FastAPI
+- Node.js
+- Supabase
+- AI Agents
+- RAG
+- OpenAI API
+- Web3
+- Solidity
 
-### Auto-discover thousands of companies
+Work mode:
+- Remote: on
+- Hybrid: on
+- Onsite: off or review-only
 
-The bundled curated list of 175 names is just the starting point. To find more:
+Max days in office:
+- 1 day
 
-```powershell
-cd backend
-.\.venv\Scripts\Activate.ps1
-python -m app.scripts.discover_companies
+Minimum salary:
+- Permanent: £40,000+
+- Contract: £300/day+
 ```
-
-This tests **694 candidate slugs** (in `app/scripts/candidate_slugs.txt`) against
-all 5 ATS APIs in parallel. Takes ~2-5 minutes, writes `backend/companies.json`,
-and the scraper will use that file from then on. Realistic outcome:
-**500-1500 working companies** depending on which ATS hosts which firms today.
-
-You can also trigger discovery from the **Companies** page in the UI — there's a
-"Run discovery" button with live progress (tested X/694, real-time per-ATS counts).
-
-To add more candidates without editing the bundled file, drop a `my_companies.txt`
-in the same folder and pass it on the CLI:
-
-```powershell
-python -m app.scripts.discover_companies my_companies.txt
-```
-
-To manually edit the lists at any time, edit `backend/companies.json` directly,
-or PUT to `/companies/lists`.
-
----
-
-## Tech stack
-
-| Layer        | Tools                                                            |
-|--------------|------------------------------------------------------------------|
-| Frontend     | Next.js 15, React 18, TypeScript, Tailwind 3, lucide-react       |
-| Backend      | FastAPI, Pydantic v2, SQLAlchemy 2 async, aiosqlite              |
-| AI           | OpenAI Python SDK (`gpt-4o-mini` by default, configurable)       |
-| Automation   | Playwright (Chromium)                                            |
-| Job sources  | RemoteOK · Greenhouse · Lever · Ashby · Workable · SmartRecruiters · JustJoin.it · NoFluffJobs |
-| Storage      | SQLite + local `uploads/`                                        |
 
 ---
 
 ## Key API endpoints
 
-```
-GET    /jobs                        list scored jobs
-POST   /jobs/search                 fetch + score new jobs
-POST   /jobs/{id}/reject            mark a job as rejected
-GET    /applications                list submitted applications
-POST   /applications/apply          {jobId, mode, answers}
-GET    /applications/stats/today    today's count vs effective limit
-POST   /match                       rescore a job
-POST   /match/cover-letter          generate cover letter
-POST   /cv/upload                   multipart upload
-POST   /cv/parse                    extract profile from CV
-GET/PUT /settings/prefs             user preferences
-GET/PUT /settings/rules             auto-apply rules (validates maxPerDay ≤ hard limit)
-GET    /settings/limits             returns the system hard ceiling
-GET    /logs                        recent agent activity
-GET    /companies/lists             returns curated company lists (per ATS)
-PUT    /companies/lists             manually edit the lists
-POST   /companies/discover          start discovery (background task)
-GET    /companies/discovery-status  poll discovery progress
+```text
+GET    /jobs                          list scored jobs
+POST   /jobs/search                   fetch + score new jobs
+POST   /jobs/clear                    clear stored jobs
+POST   /jobs/{id}/reject              reject job
+
+GET    /applications                  list tracked applications
+GET    /applications/stats/today      today's tracked applications
+POST   /applications/prepare-pack/{id} prepare application pack
+POST   /applications/extract-form/{id} extract visible form questions
+POST   /applications/answer-questions/{id} generate answers from pasted questions
+POST   /applications/apply            track manual application
+
+POST   /match                         rescore a job
+POST   /match/cover-letter            generate cover letter
+
+POST   /cv/upload                     upload CV
+POST   /cv/parse                      parse CV
+GET    /cv                            get parsed CV/profile
+
+GET/PUT /settings/prefs               user preferences
+GET/PUT /settings/rules               rules and workflow settings
+GET    /logs                          recent activity
 ```
 
 ---
 
-## Safety notes
+## Git and privacy
 
-- **Never** commits your `.env`. The included `.gitignore` already excludes it.
-- The backend hard-limits `maxPerDay` on **both** the Pydantic schema (`le=100`)
-  and the route handler (`MAX_APPLICATIONS_PER_DAY_HARD_LIMIT`).
-- Auto-Apply mode also checks for duplicate applications per `jobId` before submitting.
-- Screenshots of every auto-applied form are saved to `backend/uploads/screenshots/`.
+Never commit:
+
+- `.env`
+- API keys
+- local SQLite databases
+- uploaded CVs
+- screenshots
+- `.venv`
+- `node_modules`
+- `.next`
+
+The `.gitignore` should exclude these files.
+
+Before pushing:
+
+```powershell
+git status
+```
+
+Make sure no private files are staged.
 
 ---
 
-## Troubleshooting (PowerShell)
+## Troubleshooting
 
-| Problem                                            | Fix                                                                                  |
-|----------------------------------------------------|--------------------------------------------------------------------------------------|
-| `Activate.ps1 cannot be loaded… not digitally signed` | `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`               |
-| `playwright: command not found`                    | Make sure venv is active (`.\.venv\Scripts\Activate.ps1`) before `playwright install`|
-| Frontend shows mock data only                      | Backend not running, or `NEXT_PUBLIC_API_URL` doesn't point to the backend           |
-| `port 8000 already in use`                         | Run `uvicorn app.main:app --reload --port 8001` and update `.env.local`              |
-| `OPENAI_API_KEY` errors                            | Leave it empty — the app falls back to heuristic scoring & template cover letters    |
+| Problem | Fix |
+|---|---|
+| Frontend shows old UI | Stop frontend, delete `.next`, run `npm run dev` again |
+| Backend route returns 404 | Check that the latest route file was copied into `backend/app/routes/` |
+| Playwright throws `NotImplementedError` on Windows | Run backend with `python run_backend.py` |
+| Extract Questions returns nothing | Use Paste Questions manually |
+| Answers are too generic | Paste the exact employer questions and regenerate |
+| ATS says possible spam | Do not use automated submit; use manual browser submit |
+| No confirmation email | Treat as not submitted until confirmed manually |
 
-Have fun and apply responsibly. ✨
+---
+
+## Project goal
+
+The goal of AI Job Hunter is not to spam hundreds of applications.
+
+The goal is to help you find better-matched jobs faster and prepare stronger, tailored applications while keeping the final submission human-reviewed and safe.
